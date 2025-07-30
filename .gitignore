@@ -1,0 +1,12 @@
+# Generated files
+bin/
+*.log
+
+# IDE/editor files
+.idea/
+.vscode/
+*.swp
+
+# OS generated files
+.DS_Store
+Thumbs.db
