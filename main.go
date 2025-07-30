@@ -4,7 +4,7 @@ import (
 	"io/fs"
 	"os"
 
-	"github.com/juicedata/jfs-plugin/cmd"
+	"github.com/jiefenghuang/jfs-plugin/cmd"
 	"github.com/juicedata/juicefs/pkg/utils"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"

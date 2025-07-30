@@ -3,7 +3,7 @@ package cmd
 import (
 	"strings"
 
-	"github.com/juicedata/jfs-plugin/pkg"
+	"github.com/jiefenghuang/jfs-plugin/pkg"
 	"github.com/juicedata/juicefs/pkg/version"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli/v2"

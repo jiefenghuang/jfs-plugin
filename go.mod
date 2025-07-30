@@ -1,4 +1,4 @@
-module github.com/juicedata/jfs-plugin
+module github.com/jiefenghuang/jfs-plugin
 
 go 1.23.10
 
