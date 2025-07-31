@@ -372,13 +372,10 @@ func (t *tPlugin) listMultipartUploads(in any) (any, error) {
 
 func TestPlugin(t *testing.T) {
 	utils.SetLogLevel(logrus.DebugLevel)
-	proto, addr := "tcp", "localhost:8080"
+	url := "tcp://localhost:8080"
 
-	svr := NewServer(&SvrOptions{
-		Proto:    proto,
-		Addr:     addr,
-		BuffList: DefaultSvrCapList,
-	})
+	svr, err := NewServer(&SvrOptions{URL: url})
+	require.Nil(t, err)
 	svr.setPlugin(newTestPlugin(svr.pool))
 	done := make(chan struct{})
 	go svr.Start(done)
@@ -386,11 +383,9 @@ func TestPlugin(t *testing.T) {
 	<-done
 
 	cli, err := NewClient(&CliOptions{
-		Proto:    proto,
-		Addr:     addr,
-		BuffList: DefaultCliCapList,
-		Version:  "1.3.0",
-		Logger:   logger,
+		Version: "1.4.0",
+		URL:     url,
+		Logger:  logger,
 	})
 	require.Nil(t, err)
 	defer cli.Close()

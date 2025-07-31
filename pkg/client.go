@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,10 +13,20 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+func SplitAddr(addr string) (string, string) {
+	if strings.HasPrefix(addr, "unix://") {
+		return "unix", addr[7:]
+	} else if strings.HasPrefix(addr, "tcp://") {
+		return "tcp", addr[6:]
+	}
+	return "", ""
+}
+
 type CliOptions struct {
 	Version  string
-	Proto    string
-	Addr     string
+	URL      string
+	proto    string
+	addr     string
 	MaxConn  uint
 	BuffList []int
 	Logger   logrus.FieldLogger
@@ -25,10 +36,15 @@ func (opt *CliOptions) Check() error {
 	if opt.Logger == nil {
 		opt.Logger = utils.GetLogger("plugin-client")
 	}
-	if err := checkProto(opt.Proto); err != nil {
+	proto, addr := SplitAddr(opt.URL)
+	if proto == "" || addr == "" {
+		return errors.Errorf("invalid address format %s, expected 'tcp://<addr>' or 'unix://<path>'", opt.URL)
+	}
+	opt.proto, opt.addr = proto, addr
+	if err := checkProto(opt.proto); err != nil {
 		return err
 	}
-	if opt.Addr == "" {
+	if opt.URL == "" {
 		return errors.New("address must not be empty")
 	}
 	if opt.MaxConn == 0 {
@@ -89,7 +105,7 @@ func (c *Client) getConn() (net.Conn, error) {
 		c.Lock()
 		defer c.Unlock()
 		dialer := &net.Dialer{Timeout: time.Second, KeepAlive: time.Minute}
-		nConn, err := dialer.Dial(c.Proto, c.Addr)
+		nConn, err := dialer.Dial(c.proto, c.addr)
 		if err != nil {
 			return nil, err
 		}

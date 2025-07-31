@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"strings"
-
 	"github.com/jiefenghuang/jfs-plugin/pkg"
 	"github.com/juicedata/juicefs/pkg/version"
 	"github.com/pkg/errors"
@@ -38,23 +36,9 @@ func CmdPlugin() *cli.Command {
 	}
 }
 
-func splitAddr(addr string) (string, string) {
-	if strings.HasPrefix(addr, "unix://") {
-		return "unix", addr[7:]
-	} else if strings.HasPrefix(addr, "tcp://") {
-		return "tcp", addr[6:]
-	}
-	return "", ""
-}
-
 func runServer(c *cli.Context) error {
 	if c.NArg() != 1 {
 		return errors.Errorf("expected exactly one argument for address, got %d", c.NArg())
-	}
-
-	proto, addr := splitAddr(c.Args().First())
-	if proto == "" || addr == "" {
-		return errors.Errorf("invalid address format %s, expected 'tcp://<addr>' or 'unix://<path>'", c.Args().First())
 	}
 
 	var minVer, maxVer *version.Semver
@@ -70,12 +54,14 @@ func runServer(c *cli.Context) error {
 		capList = c.IntSlice("buff-list")
 	}
 
-	svr := pkg.NewServer(&pkg.SvrOptions{
-		Proto:      proto,
-		Addr:       addr,
+	svr, err := pkg.NewServer(&pkg.SvrOptions{
+		URL:        c.Args().First(),
 		BuffList:   capList,
 		MinVersion: minVer,
 		MaxVersion: maxVer,
 	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create server")
+	}
 	return svr.Start(nil)
 }

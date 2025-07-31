@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/juicedata/juicefs/pkg/object"
+	"github.com/stretchr/testify/require"
 )
 
 func BenchmarkBufferPool(b *testing.B) {
@@ -62,20 +64,17 @@ func BenchmarkPlugin(b *testing.B) {
 	b.Run("UDS", func(b *testing.B) {
 		sock := path.Join(os.TempDir(), time.Now().Format("080808")+".uds")
 		defer os.RemoveAll(sock)
-		benchmarkConn(b, "unix", sock)
+		benchmarkConn(b, fmt.Sprintf("unix://%s", sock))
 	})
 	b.Run("TCP", func(b *testing.B) {
-		benchmarkConn(b, "tcp", "localhost:8080")
+		benchmarkConn(b, "tcp://localhost:8080")
 	})
 }
 
-func benchmarkConn(b *testing.B, proto, addr string) {
+func benchmarkConn(b *testing.B, url string) {
 	// utils.SetLogLevel(logrus.DebugLevel)
-	svr := NewServer(&SvrOptions{
-		Proto:    proto,
-		Addr:     addr,
-		BuffList: DefaultSvrCapList,
-	})
+	svr, err := NewServer(&SvrOptions{URL: url})
+	require.Nil(b, err)
 	svr.setPlugin(&fakePlugin{})
 	done := make(chan struct{})
 	go svr.Start(done)
@@ -83,11 +82,9 @@ func benchmarkConn(b *testing.B, proto, addr string) {
 	<-done
 
 	cli, err := NewClient(&CliOptions{
-		Version:  "1.3.0",
-		MaxConn:  200,
-		Proto:    svr.Proto,
-		Addr:     svr.Addr,
-		BuffList: DefaultCliCapList,
+		Version: "1.3.0",
+		MaxConn: 200,
+		URL:     url,
 	})
 	if err != nil {
 		b.Fatalf("failed to create client: %v", err)

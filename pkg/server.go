@@ -18,11 +18,27 @@ import (
 var logger = utils.GetLogger("jfs-plugin")
 
 type SvrOptions struct {
-	Proto      string // "tcp" or "unix"
-	Addr       string
+	URL        string
+	proto      string // "tcp" or "unix"
+	addr       string
 	BuffList   []int
 	MinVersion *version.Semver
 	MaxVersion *version.Semver
+}
+
+func (opt *SvrOptions) Check() error {
+	proto, addr := SplitAddr(opt.URL)
+	if proto == "" || addr == "" {
+		return errors.Errorf("invalid address format %s, expected 'tcp://<addr>' or 'unix://<path>'", opt.URL)
+	}
+	opt.proto, opt.addr = proto, addr
+	if err := checkProto(opt.proto); err != nil {
+		return err
+	}
+	if opt.BuffList == nil {
+		opt.BuffList = DefaultCliCapList
+	}
+	return nil
 }
 
 type server struct {
@@ -35,7 +51,10 @@ type server struct {
 	handlers map[byte]func(any) (any, error)
 }
 
-func NewServer(opt *SvrOptions) *server {
+func NewServer(opt *SvrOptions) (*server, error) {
+	if err := opt.Check(); err != nil {
+		return nil, err
+	}
 	pool := newBufferPool(opt.BuffList)
 	svr := &server{
 		SvrOptions: opt,
@@ -44,7 +63,7 @@ func NewServer(opt *SvrOptions) *server {
 		pool:       pool,
 	}
 	svr.setPlugin(newPlugin(pool))
-	return svr
+	return svr, nil
 }
 
 func (s *server) setPlugin(pl plugin) {
@@ -80,16 +99,16 @@ func (s *server) Start(done chan<- struct{}) error {
 	s.running = true
 	var err error
 	for i := 0; i < 3; i++ {
-		s.listener, err = net.Listen(s.Proto, s.Addr)
+		s.listener, err = net.Listen(s.proto, s.addr)
 		if err == nil {
 			break
 		}
-		logger.Warnf("failed to listen on %s://%s: %v, retrying...", s.Proto, s.Addr, err)
+		logger.Warnf("failed to listen on %s: %v, retrying...", s.URL, err)
 		time.Sleep(time.Second * time.Duration(i+1))
 	}
 
 	if err != nil {
-		return errors.Wrapf(err, "failed to listen on %s://%s", s.Proto, s.Addr)
+		return errors.Wrapf(err, "failed to listen on %s", s.URL)
 	}
 
 	logger.Infof("server listening on %s", s.listener.Addr())
