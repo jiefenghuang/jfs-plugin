@@ -42,7 +42,7 @@ func newBufferPool(capList []int) *bufferPool {
 			},
 		})
 	}
-	for i := range len(pool.expPools) {
+	for i := range pool.expPools {
 		pool.expPools[i] = &sync.Pool{
 			New: func() any {
 				b := make([]byte, 1<<i)
