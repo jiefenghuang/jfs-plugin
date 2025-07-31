@@ -1,4 +1,4 @@
-package pkg
+package server
 
 import (
 	"encoding/binary"
@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jiefenghuang/jfs-plugin/pkg/msg"
 	"github.com/juicedata/juicefs/pkg/object"
 	"github.com/juicedata/juicefs/pkg/utils"
 	"github.com/juicedata/juicefs/pkg/version"
@@ -27,16 +28,16 @@ type SvrOptions struct {
 }
 
 func (opt *SvrOptions) Check() error {
-	proto, addr := SplitAddr(opt.URL)
+	proto, addr := msg.SplitAddr(opt.URL)
 	if proto == "" || addr == "" {
 		return errors.Errorf("invalid address format %s, expected 'tcp://<addr>' or 'unix://<path>'", opt.URL)
 	}
 	opt.proto, opt.addr = proto, addr
-	if err := checkProto(opt.proto); err != nil {
+	if err := msg.CheckProto(opt.proto); err != nil {
 		return err
 	}
 	if opt.BuffList == nil {
-		opt.BuffList = DefaultCliCapList
+		opt.BuffList = msg.DefaultSvrCapList
 	}
 	return nil
 }
@@ -47,7 +48,7 @@ type server struct {
 	listener net.Listener
 	enc      *svrEncoder
 	dec      *svrDecoder
-	pool     *bufferPool
+	pool     msg.BytesPool
 	handlers map[byte]func(any) (any, error)
 }
 
@@ -55,7 +56,7 @@ func NewServer(opt *SvrOptions) (*server, error) {
 	if err := opt.Check(); err != nil {
 		return nil, err
 	}
-	pool := newBufferPool(opt.BuffList)
+	pool := msg.NewBytesPool(opt.BuffList)
 	svr := &server{
 		SvrOptions: opt,
 		dec:        newSvrDecoder(pool),
@@ -72,23 +73,23 @@ func (s *server) setPlugin(pl plugin) {
 		return
 	}
 	s.handlers = map[byte]func(any) (any, error){
-		cmdPut:            pl.put,
-		cmdGet:            pl.get,
-		cmdStr:            pl.str,
-		cmdLimits:         pl.limits,
-		cmdInit:           pl.init,
-		cmdCreate:         pl.create,
-		cmdDel:            pl.delete,
-		cmdCopy:           pl.copy,
-		cmdHead:           pl.head,
-		cmdSetSC:          pl.setStorageClass,
-		cmdList:           pl.list,
-		cmdCreateMPU:      pl.createMultipartUpload,
-		cmdUploadPart:     pl.uploadPart,
-		cmdUploadPartCopy: pl.uploadPartCopy,
-		cmdCompleteMPU:    pl.completeMultipartUpload,
-		cmdListMPU:        pl.listMultipartUploads,
-		cmdAbortMPU:       pl.abortMultipartUpload,
+		msg.CmdPut:            pl.put,
+		msg.CmdGet:            pl.get,
+		msg.CmdStr:            pl.str,
+		msg.CmdLimits:         pl.limits,
+		msg.CmdInit:           pl.init,
+		msg.CmdCreate:         pl.create,
+		msg.CmdDel:            pl.delete,
+		msg.CmdCopy:           pl.copy,
+		msg.CmdHead:           pl.head,
+		msg.CmdSetSC:          pl.setStorageClass,
+		msg.CmdList:           pl.list,
+		msg.CmdCreateMPU:      pl.createMultipartUpload,
+		msg.CmdUploadPart:     pl.uploadPart,
+		msg.CmdUploadPartCopy: pl.uploadPartCopy,
+		msg.CmdCompleteMPU:    pl.completeMultipartUpload,
+		msg.CmdListMPU:        pl.listMultipartUploads,
+		msg.CmdAbortMPU:       pl.abortMultipartUpload,
 	}
 }
 
@@ -181,7 +182,7 @@ func (s *server) serve(conn net.Conn) {
 		}
 
 		if err = s.enc.encoders[resp.cmd](conn, &resp); err != nil {
-			logger.Errorf("failed to encode response for command %s: %v", cmd2Name[resp.cmd], err)
+			logger.Errorf("failed to encode response for command %s: %v", msg.Cmd2Name[resp.cmd], err)
 			break
 		}
 		req.clear()
@@ -192,15 +193,15 @@ func (s *server) auth(conn net.Conn) error {
 	defer conn.SetDeadline(time.Time{})
 
 	var err error
-	buff := s.pool.Get(headerLen)
+	buff := s.pool.Get(msg.HeaderLen)
 	defer s.pool.Put(buff)
 	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	if _, err = io.ReadFull(conn, buff); err != nil {
 		return errors.Wrap(err, "failed to read CmdAuth header")
 	}
-	m := newMsg(buff)
-	bLen, cmd := m.getHeader()
-	if cmd != cmdAuth {
+	m := msg.NewMsg(buff)
+	bLen, cmd := m.GetHeader()
+	if cmd != msg.CmdAuth {
 		return errors.Wrap(err, "the first request must be CmdAuth")
 	}
 
@@ -211,7 +212,7 @@ func (s *server) auth(conn net.Conn) error {
 		return errors.Wrap(err, "failed to read init payload")
 	}
 	m.SetBytes(buff2)
-	ver := version.Parse(m.getString())
+	ver := version.Parse(m.GetString())
 	if ver != nil {
 		if s.MinVersion != nil {
 			if ret, _ := version.CompareVersions(s.MinVersion, ver); ret < 0 {
@@ -225,8 +226,8 @@ func (s *server) auth(conn net.Conn) error {
 		}
 	}
 	conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
-	return s.enc.encoders[cmdAuth](conn, &response{
-		cmd: cmdAuth,
+	return s.enc.encoders[msg.CmdAuth](conn, &response{
+		cmd: msg.CmdAuth,
 		out: nil,
 		err: "",
 	})
@@ -244,7 +245,7 @@ func (r *request) clear() {
 		cb()
 	}
 	r.callbacks = nil
-	r.cmd = cmdUnknown
+	r.cmd = msg.CmdUnknown
 	r.bodyLen = 0
 	r.in = nil
 }
@@ -262,38 +263,38 @@ type response struct {
 
 type svrDecoder struct {
 	decoders map[byte]func(net.Conn, *request) error
-	pool     *bufferPool
+	pool     msg.BytesPool
 }
 
-func newSvrDecoder(buffPool *bufferPool) *svrDecoder {
+func newSvrDecoder(buffPool msg.BytesPool) *svrDecoder {
 	dec := &svrDecoder{
 		pool: buffPool,
 	}
 	dec.decoders = map[byte]func(net.Conn, *request) error{
-		cmdInit:           dec.decodeInitReq,
-		cmdPut:            dec.decodePutReq,
-		cmdGet:            dec.decodeGetReq,
-		cmdStr:            dec.decodeEmptyReq,
-		cmdLimits:         dec.decodeEmptyReq,
-		cmdCreate:         dec.decodeEmptyReq,
-		cmdDel:            dec.decodeDeleteReq,
-		cmdCopy:           dec.decodeCopyReq,
-		cmdHead:           dec.decodeHeadReq,
-		cmdSetSC:          dec.decodeSetSCReq,
-		cmdList:           dec.decodeListReq,
-		cmdCreateMPU:      dec.decodeCreateMPUReq,
-		cmdUploadPart:     dec.decodeUploadPartReq,
-		cmdUploadPartCopy: dec.decodeUploadPartCopyReq,
-		cmdAbortMPU:       dec.decodeAbortMPUReq,
-		cmdCompleteMPU:    dec.decodeCompleteMPUReq,
-		cmdListMPU:        dec.decodeListMPUReq,
+		msg.CmdInit:           dec.decodeInitReq,
+		msg.CmdPut:            dec.decodePutReq,
+		msg.CmdGet:            dec.decodeGetReq,
+		msg.CmdStr:            dec.decodeEmptyReq,
+		msg.CmdLimits:         dec.decodeEmptyReq,
+		msg.CmdCreate:         dec.decodeEmptyReq,
+		msg.CmdDel:            dec.decodeDeleteReq,
+		msg.CmdCopy:           dec.decodeCopyReq,
+		msg.CmdHead:           dec.decodeHeadReq,
+		msg.CmdSetSC:          dec.decodeSetSCReq,
+		msg.CmdList:           dec.decodeListReq,
+		msg.CmdCreateMPU:      dec.decodeCreateMPUReq,
+		msg.CmdUploadPart:     dec.decodeUploadPartReq,
+		msg.CmdUploadPartCopy: dec.decodeUploadPartCopyReq,
+		msg.CmdAbortMPU:       dec.decodeAbortMPUReq,
+		msg.CmdCompleteMPU:    dec.decodeCompleteMPUReq,
+		msg.CmdListMPU:        dec.decodeListMPUReq,
 	}
 	return dec
 }
 
 func (dec *svrDecoder) decode(conn net.Conn, req *request) error {
 	var err error
-	buff := dec.pool.Get(headerLen)
+	buff := dec.pool.Get(msg.HeaderLen)
 	if _, err = io.ReadFull(conn, buff); err != nil {
 		dec.pool.Put(buff)
 		return errors.Wrap(err, "failed to read header")
@@ -302,7 +303,7 @@ func (dec *svrDecoder) decode(conn net.Conn, req *request) error {
 	req.cmd = buff[4]
 	dec.pool.Put(buff)
 
-	if req.cmd <= cmdUnknown || req.cmd >= cmdMax {
+	if req.cmd <= msg.CmdUnknown || req.cmd >= msg.CmdMax {
 		return errors.Errorf("unknown command: %d", req.cmd)
 	}
 	return dec.decoders[req.cmd](conn, req)
@@ -315,12 +316,12 @@ func (dec *svrDecoder) decodeInitReq(conn net.Conn, req *request) error {
 		return errors.Wrap(err, "failed to read Init payload")
 	}
 
-	m := newMsg(buff)
+	m := msg.NewMsg(buff)
 	req.in = &initIn{
-		endpoint:  m.getString(),
-		accesskey: m.getString(),
-		secretkey: m.getString(),
-		token:     m.getString(),
+		endpoint:  m.GetString(),
+		accesskey: m.GetString(),
+		secretkey: m.GetString(),
+		token:     m.GetString(),
 	}
 	return nil
 }
@@ -331,8 +332,8 @@ func (dec *svrDecoder) decodeListMPUReq(conn net.Conn, req *request) error {
 	if _, err := io.ReadFull(conn, buff); err != nil {
 		return errors.Wrap(err, "failed to read ListMultipartUploads payload")
 	}
-	m := newMsg(buff)
-	req.in = m.getString()
+	m := msg.NewMsg(buff)
+	req.in = m.GetString()
 	return nil
 }
 
@@ -342,10 +343,10 @@ func (dec *svrDecoder) decodeCompleteMPUReq(conn net.Conn, req *request) error {
 	if _, err := io.ReadFull(conn, buff); err != nil {
 		return errors.Wrap(err, "failed to read CompleteMultipartUpload payload")
 	}
-	m := newMsg(buff)
+	m := msg.NewMsg(buff)
 	in := &completeMPUIn{
-		key:      m.getString(),
-		uploadID: m.getString(),
+		key:      m.GetString(),
+		uploadID: m.GetString(),
 	}
 	batchLen := m.Get32()
 	batchBuff := dec.pool.Get(1<<20 + 4)
@@ -362,7 +363,7 @@ func (dec *svrDecoder) decodeCompleteMPUReq(conn net.Conn, req *request) error {
 			in.parts = append(in.parts, &object.Part{
 				Num:  int(m.Get32()),
 				Size: int(m.Get32()),
-				ETag: m.getString(),
+				ETag: m.GetString(),
 			})
 		}
 		m.SetBytes(batchBuff[batchLen:])
@@ -378,10 +379,10 @@ func (dec *svrDecoder) decodeAbortMPUReq(conn net.Conn, req *request) error {
 	if _, err := io.ReadFull(conn, buff); err != nil {
 		return errors.Wrap(err, "failed to read AbortMultipartUpload payload")
 	}
-	m := newMsg(buff)
+	m := msg.NewMsg(buff)
 	req.in = &abortMPUIn{
-		key:      m.getString(),
-		uploadID: m.getString(),
+		key:      m.GetString(),
+		uploadID: m.GetString(),
 	}
 	return nil
 }
@@ -393,12 +394,12 @@ func (dec *svrDecoder) decodeUploadPartCopyReq(conn net.Conn, req *request) erro
 		return errors.Wrap(err, "failed to read UploadPartCopy payload")
 	}
 
-	m := newMsg(buff)
+	m := msg.NewMsg(buff)
 	req.in = &uploadPartCopyIn{
-		dstKey:   m.getString(),
-		uploadID: m.getString(),
+		dstKey:   m.GetString(),
+		uploadID: m.GetString(),
 		num:      int(m.Get32()),
-		srcKey:   m.getString(),
+		srcKey:   m.GetString(),
 		off:      int64(m.Get64()),
 		size:     int64(m.Get64()),
 	}
@@ -412,10 +413,10 @@ func (dec *svrDecoder) decodeUploadPartReq(conn net.Conn, req *request) error {
 		return errors.Wrap(err, "failed to read UploadPart payload")
 	}
 
-	m := newMsg(buff)
+	m := msg.NewMsg(buff)
 	req.in = &uloadPartIn{
-		key:      m.getString(),
-		uploadID: m.getString(),
+		key:      m.GetString(),
+		uploadID: m.GetString(),
 		num:      int(m.Get32()),
 		body: &io.LimitedReader{
 			R: conn,
@@ -431,8 +432,8 @@ func (dec *svrDecoder) decodeCreateMPUReq(conn net.Conn, req *request) error {
 	if _, err := io.ReadFull(conn, buff); err != nil {
 		return errors.Wrap(err, "failed to read CreateMultipartUpload payload")
 	}
-	m := newMsg(buff)
-	req.in = m.getString()
+	m := msg.NewMsg(buff)
+	req.in = m.GetString()
 	return nil
 }
 
@@ -443,9 +444,9 @@ func (dec *svrDecoder) decodePutReq(conn net.Conn, req *request) error {
 		return errors.Wrap(err, "failed to read Put payload")
 	}
 
-	m := newMsg(buff)
+	m := msg.NewMsg(buff)
 	req.in = &putIn{
-		key:    m.getString(),
+		key:    m.GetString(),
 		reader: &io.LimitedReader{R: conn, N: int64(m.Get32())},
 	}
 	return nil
@@ -457,8 +458,8 @@ func (dec *svrDecoder) decodeHeadReq(conn net.Conn, req *request) error {
 	if _, err := io.ReadFull(conn, buff); err != nil {
 		return errors.Wrap(err, "failed to read Head payload")
 	}
-	m := newMsg(buff)
-	req.in = m.getString()
+	m := msg.NewMsg(buff)
+	req.in = m.GetString()
 	return nil
 }
 
@@ -468,8 +469,8 @@ func (dec *svrDecoder) decodeCopyReq(conn net.Conn, req *request) error {
 	if _, err := io.ReadFull(conn, buff); err != nil {
 		return errors.Wrap(err, "failed to read Copy payload")
 	}
-	m := newMsg(buff)
-	req.in = &copyIn{dst: m.getString(), src: m.getString()}
+	m := msg.NewMsg(buff)
+	req.in = &copyIn{dst: m.GetString(), src: m.GetString()}
 	return nil
 }
 
@@ -479,14 +480,14 @@ func (dec *svrDecoder) decodeListReq(conn net.Conn, req *request) error {
 	if _, err := io.ReadFull(conn, buff); err != nil {
 		return errors.Wrap(err, "failed to read List payload")
 	}
-	m := newMsg(buff)
+	m := msg.NewMsg(buff)
 	req.in = &listIn{
-		prefix:     m.getString(),
-		startAfter: m.getString(),
-		token:      m.getString(),
-		delimiter:  m.getString(),
+		prefix:     m.GetString(),
+		startAfter: m.GetString(),
+		token:      m.GetString(),
+		delimiter:  m.GetString(),
 		limit:      int64(m.Get64()),
-		followLink: m.getBool(),
+		followLink: m.GetBool(),
 	}
 	return nil
 }
@@ -497,8 +498,8 @@ func (dec *svrDecoder) decodeSetSCReq(conn net.Conn, req *request) error {
 	if _, err := io.ReadFull(conn, buff); err != nil {
 		return errors.Wrap(err, "failed to read SetStorageClass payload")
 	}
-	m := newMsg(buff)
-	req.in = m.getString()
+	m := msg.NewMsg(buff)
+	req.in = m.GetString()
 	return nil
 }
 
@@ -508,8 +509,8 @@ func (dec *svrDecoder) decodeDeleteReq(conn net.Conn, req *request) error {
 	if _, err := io.ReadFull(conn, buff); err != nil {
 		return errors.Wrap(err, "failed to read Get payload")
 	}
-	m := newMsg(buff)
-	req.in = m.getString()
+	m := msg.NewMsg(buff)
+	req.in = m.GetString()
 	return nil
 }
 
@@ -519,9 +520,9 @@ func (dec *svrDecoder) decodeGetReq(conn net.Conn, req *request) error {
 	if _, err := io.ReadFull(conn, buff); err != nil {
 		return errors.Wrap(err, "failed to read Get payload")
 	}
-	m := newMsg(buff)
+	m := msg.NewMsg(buff)
 	req.in = &getIn{
-		key:    m.getString(),
+		key:    m.GetString(),
 		offset: int64(m.Get64()),
 		limit:  int64(m.Get64()),
 	}
@@ -531,31 +532,31 @@ func (dec *svrDecoder) decodeGetReq(conn net.Conn, req *request) error {
 func (dec *svrDecoder) decodeEmptyReq(conn net.Conn, req *request) error { return nil }
 
 type svrEncoder struct {
-	pool     *bufferPool
+	pool     msg.BytesPool
 	encoders map[byte]func(net.Conn, *response) error
 }
 
-func newSvrEncoder(buffPool *bufferPool) *svrEncoder {
+func newSvrEncoder(buffPool msg.BytesPool) *svrEncoder {
 	enc := &svrEncoder{pool: buffPool}
 	enc.encoders = map[byte]func(net.Conn, *response) error{
-		cmdAuth:           enc.encodeSimpleResp,
-		cmdPut:            enc.encodePutResp,
-		cmdGet:            enc.encodeGetResp,
-		cmdStr:            enc.encodeStrResp,
-		cmdLimits:         enc.encodeLimitsResp,
-		cmdInit:           enc.encodeSimpleResp,
-		cmdCreate:         enc.encodeSimpleResp,
-		cmdDel:            enc.encodeDelResp,
-		cmdCopy:           enc.encodeSimpleResp,
-		cmdHead:           enc.encodeHeadResp,
-		cmdSetSC:          enc.encodeSimpleResp,
-		cmdList:           enc.encodeListResp,
-		cmdCreateMPU:      enc.encodeCreateMPUResp,
-		cmdUploadPart:     enc.encodeUploadPartResp,
-		cmdUploadPartCopy: enc.encodeUploadPartResp,
-		cmdAbortMPU:       enc.encodeSimpleResp,
-		cmdCompleteMPU:    enc.encodeSimpleResp,
-		cmdListMPU:        enc.encodeListMPUResp,
+		msg.CmdAuth:           enc.encodeSimpleResp,
+		msg.CmdPut:            enc.encodePutResp,
+		msg.CmdGet:            enc.encodeGetResp,
+		msg.CmdStr:            enc.encodeStrResp,
+		msg.CmdLimits:         enc.encodeLimitsResp,
+		msg.CmdInit:           enc.encodeSimpleResp,
+		msg.CmdCreate:         enc.encodeSimpleResp,
+		msg.CmdDel:            enc.encodeDelResp,
+		msg.CmdCopy:           enc.encodeSimpleResp,
+		msg.CmdHead:           enc.encodeHeadResp,
+		msg.CmdSetSC:          enc.encodeSimpleResp,
+		msg.CmdList:           enc.encodeListResp,
+		msg.CmdCreateMPU:      enc.encodeCreateMPUResp,
+		msg.CmdUploadPart:     enc.encodeUploadPartResp,
+		msg.CmdUploadPartCopy: enc.encodeUploadPartResp,
+		msg.CmdAbortMPU:       enc.encodeSimpleResp,
+		msg.CmdCompleteMPU:    enc.encodeSimpleResp,
+		msg.CmdListMPU:        enc.encodeListMPUResp,
 	}
 	return enc
 }
@@ -568,9 +569,9 @@ func (enc *svrEncoder) encodeListMPUResp(conn net.Conn, resp *response) error {
 	bodyLen := 2 + len(resp.err) + 2 + len(out.nextMarker) + 4 // 4 is next batch length
 	buff := enc.pool.Get(4 + 1<<20)
 	defer enc.pool.Put(buff)
-	m := newEncMsg(buff, bodyLen, resp.cmd)
-	m.putString(resp.err)
-	m.putString(out.nextMarker)
+	m := msg.NewEncMsg(buff, bodyLen, resp.cmd)
+	m.PutString(resp.err)
+	m.PutString(out.nextMarker)
 
 	off := m.Offset()
 	batchLen := 0
@@ -597,8 +598,8 @@ func (enc *svrEncoder) encodeListMPUResp(conn net.Conn, resp *response) error {
 			off, batchLen = 0, 0
 			m.Put32(0)
 		}
-		m.putString(part.Key)
-		m.putString(part.UploadID)
+		m.PutString(part.Key)
+		m.PutString(part.UploadID)
 		m.Put64(uint64(part.Created.UnixNano()))
 		batchLen += partLen
 	}
@@ -622,13 +623,13 @@ func (enc *svrEncoder) encodeUploadPartResp(conn net.Conn, resp *response) error
 	}
 	out := resp.out.(*object.Part)
 	bodyLen := 2 + len(resp.err) + 4 + 4 + 2 + len(out.ETag)
-	buff := enc.pool.Get(headerLen + bodyLen)
+	buff := enc.pool.Get(msg.HeaderLen + bodyLen)
 	defer enc.pool.Put(buff)
-	m := newEncMsg(buff, bodyLen, resp.cmd)
-	m.putString(resp.err)
+	m := msg.NewEncMsg(buff, bodyLen, resp.cmd)
+	m.PutString(resp.err)
 	m.Put32(uint32(out.Num))
 	m.Put32(uint32(out.Size))
-	m.putString(out.ETag)
+	m.PutString(out.ETag)
 	if _, err := conn.Write(m.Bytes()); err != nil {
 		return errors.Wrap(err, "failed to write UploadPart response")
 	}
@@ -641,13 +642,13 @@ func (enc *svrEncoder) encodeCreateMPUResp(conn net.Conn, resp *response) error 
 	}
 	out := resp.out.(*object.MultipartUpload)
 	bodyLen := 2 + len(resp.err) + 4 + 4 + 2 + len(out.UploadID)
-	buff := enc.pool.Get(headerLen + bodyLen)
+	buff := enc.pool.Get(msg.HeaderLen + bodyLen)
 	defer enc.pool.Put(buff)
-	m := newEncMsg(buff, bodyLen, resp.cmd)
-	m.putString(resp.err)
+	m := msg.NewEncMsg(buff, bodyLen, resp.cmd)
+	m.PutString(resp.err)
 	m.Put32(uint32(out.MinPartSize))
 	m.Put32(uint32(out.MaxCount))
-	m.putString(out.UploadID)
+	m.PutString(out.UploadID)
 
 	if _, err := conn.Write(m.Bytes()); err != nil {
 		return errors.Wrap(err, "failed to write CreateMultipartUpload response")
@@ -663,10 +664,10 @@ func (enc *svrEncoder) encodeListResp(conn net.Conn, resp *response) error {
 	buff := enc.pool.Get(1 << 20)
 	defer enc.pool.Put(buff)
 	bodyLen := 2 + len(resp.err) + 1 + 2 + len(out.nextMarker) + 4 // last 4 bytes is a placeholder for next batch length
-	m := newEncMsg(buff, bodyLen, resp.cmd)
-	m.putString(resp.err)
-	m.putBool(out.isTruncated)
-	m.putString(out.nextMarker)
+	m := msg.NewEncMsg(buff, bodyLen, resp.cmd)
+	m.PutString(resp.err)
+	m.PutBool(out.isTruncated)
+	m.PutString(out.nextMarker)
 
 	off := m.Offset()
 	batchLen := 0
@@ -693,11 +694,11 @@ func (enc *svrEncoder) encodeListResp(conn net.Conn, resp *response) error {
 			off, batchLen = 0, 0
 			m.Put32(0) // reset placeholder
 		}
-		m.putString(obj.Key())
-		m.putString(obj.StorageClass())
+		m.PutString(obj.Key())
+		m.PutString(obj.StorageClass())
 		m.Put64(uint64(obj.Size()))
 		m.Put64(uint64(obj.Mtime().UnixNano()))
-		m.putBool(obj.IsDir())
+		m.PutBool(obj.IsDir())
 		batchLen += objLen
 	}
 
@@ -720,14 +721,14 @@ func (enc *svrEncoder) encodeHeadResp(conn net.Conn, resp *response) error {
 	}
 	out := resp.out.(*headOut)
 	bodyLen := 2 + len(resp.err) + 2 + len(out.sc) + 8 + 1 + 8
-	buff := enc.pool.Get(headerLen + bodyLen)
+	buff := enc.pool.Get(msg.HeaderLen + bodyLen)
 	defer enc.pool.Put(buff)
-	m := newEncMsg(buff, bodyLen, resp.cmd)
-	m.putString(resp.err)
-	m.putString(out.sc)
+	m := msg.NewEncMsg(buff, bodyLen, resp.cmd)
+	m.PutString(resp.err)
+	m.PutString(out.sc)
 	m.Put64(uint64(out.size))
 	m.Put64(uint64(out.mtime.UnixNano()))
-	m.putBool(out.isDir)
+	m.PutBool(out.isDir)
 
 	if _, err := conn.Write(m.Bytes()); err != nil {
 		return errors.Wrap(err, "failed to write Head response")
@@ -741,11 +742,11 @@ func (enc *svrEncoder) encodeDelResp(conn net.Conn, resp *response) error {
 	}
 	rid := resp.out.(*delOut).rid
 	bodyLen := 4 + len(resp.err) + len(rid)
-	buff := enc.pool.Get(headerLen + bodyLen)
+	buff := enc.pool.Get(msg.HeaderLen + bodyLen)
 	defer enc.pool.Put(buff)
-	m := newEncMsg(buff, bodyLen, resp.cmd)
-	m.putString(resp.err)
-	m.putString(rid)
+	m := msg.NewEncMsg(buff, bodyLen, resp.cmd)
+	m.PutString(resp.err)
+	m.PutString(rid)
 	if _, err := conn.Write(m.Bytes()); err != nil {
 		return errors.Wrapf(err, "failed to write Delete response")
 	}
@@ -761,12 +762,12 @@ func (enc *svrEncoder) encodePutResp(conn net.Conn, resp *response) error {
 	var buff []byte
 	out = resp.out.(*putOut)
 	bodyLen = 6 + len(resp.err) + len(out.rid) + len(out.sc)
-	buff = enc.pool.Get(headerLen + bodyLen)
+	buff = enc.pool.Get(msg.HeaderLen + bodyLen)
 	defer enc.pool.Put(buff)
-	m := newEncMsg(buff, bodyLen, resp.cmd)
-	m.putString(resp.err)
-	m.putString(out.rid)
-	m.putString(out.sc)
+	m := msg.NewEncMsg(buff, bodyLen, resp.cmd)
+	m.PutString(resp.err)
+	m.PutString(out.rid)
+	m.PutString(out.sc)
 	if _, err := conn.Write(m.Bytes()); err != nil {
 		return errors.Wrap(err, "failed to write Put response")
 	}
@@ -783,12 +784,12 @@ func (enc *svrEncoder) encodeGetResp(conn net.Conn, resp *response) error {
 		dataLen = out.rc.Len()
 	}
 	bodyLen := 6 + len(resp.err) + len(out.rid) + len(out.sc) + dataLen
-	buff := enc.pool.Get(headerLen + bodyLen - dataLen)
+	buff := enc.pool.Get(msg.HeaderLen + bodyLen - dataLen)
 	defer enc.pool.Put(buff)
-	m := newEncMsg(buff, bodyLen, resp.cmd)
-	m.putString(resp.err)
-	m.putString(out.rid)
-	m.putString(out.sc)
+	m := msg.NewEncMsg(buff, bodyLen, resp.cmd)
+	m.PutString(resp.err)
+	m.PutString(out.rid)
+	m.PutString(out.sc)
 
 	var err error
 	if _, err = conn.Write(m.Bytes()); err != nil {
@@ -807,11 +808,11 @@ func (enc *svrEncoder) encodeGetResp(conn net.Conn, resp *response) error {
 func (enc *svrEncoder) encodeStrResp(conn net.Conn, resp *response) error {
 	name := resp.out.(string)
 	bLen := 4 + len(resp.err) + len(name)
-	buff := enc.pool.Get(headerLen + bLen)
+	buff := enc.pool.Get(msg.HeaderLen + bLen)
 	defer enc.pool.Put(buff)
-	m := newEncMsg(buff, bLen, resp.cmd)
-	m.putString(resp.err)
-	m.putString(name)
+	m := msg.NewEncMsg(buff, bLen, resp.cmd)
+	m.PutString(resp.err)
+	m.PutString(name)
 
 	if _, err := conn.Write(m.Bytes()); err != nil {
 		return errors.Wrap(err, "failed to write String response")
@@ -821,13 +822,13 @@ func (enc *svrEncoder) encodeStrResp(conn net.Conn, resp *response) error {
 
 func (enc *svrEncoder) encodeLimitsResp(conn net.Conn, resp *response) error {
 	bLen := 2 + len(resp.err) + 26
-	buff := enc.pool.Get(headerLen + bLen)
+	buff := enc.pool.Get(msg.HeaderLen + bLen)
 	defer enc.pool.Put(buff)
-	m := newEncMsg(buff, bLen, resp.cmd)
-	m.putString(resp.err)
+	m := msg.NewEncMsg(buff, bLen, resp.cmd)
+	m.PutString(resp.err)
 	limits := resp.out.(*object.Limits)
-	m.putBool(limits.IsSupportMultipartUpload)
-	m.putBool(limits.IsSupportUploadPartCopy)
+	m.PutBool(limits.IsSupportMultipartUpload)
+	m.PutBool(limits.IsSupportUploadPartCopy)
 	m.Put64(uint64(limits.MinPartSize))
 	m.Put64(uint64(limits.MaxPartSize))
 	m.Put64(uint64(limits.MaxPartCount))
@@ -843,14 +844,14 @@ func (s *svrEncoder) encodeSimpleResp(conn net.Conn, resp *response) error {
 	if resp.err == "" {
 		bodyLen = 0
 	}
-	buff := s.pool.Get(headerLen + bodyLen)
+	buff := s.pool.Get(msg.HeaderLen + bodyLen)
 	defer s.pool.Put(buff)
-	m := newEncMsg(buff, bodyLen, resp.cmd)
+	m := msg.NewEncMsg(buff, bodyLen, resp.cmd)
 	if resp.err != "" {
-		m.putString(resp.err)
+		m.PutString(resp.err)
 	}
 	if _, err := conn.Write(m.Bytes()); err != nil {
-		return errors.Wrapf(err, "failed to write %s response", cmd2Name[resp.cmd])
+		return errors.Wrapf(err, "failed to write %s response", msg.Cmd2Name[resp.cmd])
 	}
 	return nil
 }

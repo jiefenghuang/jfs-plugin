@@ -1,11 +1,11 @@
 //go:build !windows
 // +build !windows
 
-package pkg
+package msg
 
 import "github.com/pkg/errors"
 
-func checkProto(proto string) error {
+func CheckProto(proto string) error {
 	if proto != "tcp" && proto != "unix" {
 		return errors.Errorf("unsupported protocol: %s", proto)
 	}

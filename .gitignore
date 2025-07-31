@@ -10,3 +10,6 @@ bin/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Tmp
+plugin_tpl.go

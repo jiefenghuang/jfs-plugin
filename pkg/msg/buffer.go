@@ -1,4 +1,4 @@
-package pkg
+package msg
 
 import (
 	"math/bits"
@@ -8,16 +8,21 @@ import (
 
 var (
 	DefaultSvrCapList = []int{
-		headerLen,
-		4 + 1<<20, // for batch
+		HeaderLen,
+		4 + 1<<20,
 		512 + 4<<20,
 	}
 	DefaultCliCapList = []int{
-		headerLen,
-		headerLen + 2 + 64,
-		headerLen + 2 + 128,
+		HeaderLen,
+		HeaderLen + 2 + 64,
+		HeaderLen + 2 + 128,
 	}
 )
+
+type BytesPool interface {
+	Get(targetCap int) []byte
+	Put(buff []byte)
+}
 
 type bufferPool struct {
 	specPools []*sync.Pool
@@ -27,7 +32,7 @@ type bufferPool struct {
 	expPools  [23]*sync.Pool // max 4MiB
 }
 
-func newBufferPool(capList []int) *bufferPool {
+func NewBytesPool(capList []int) BytesPool {
 	sort.Ints(capList)
 	pool := &bufferPool{specCaps: capList}
 
@@ -43,9 +48,10 @@ func newBufferPool(capList []int) *bufferPool {
 		})
 	}
 	for i := range pool.expPools {
-		pool.expPools[i] = &sync.Pool{
+		idx := i
+		pool.expPools[idx] = &sync.Pool{
 			New: func() any {
-				b := make([]byte, 1<<i)
+				b := make([]byte, 1<<idx)
 				return &b
 			},
 		}

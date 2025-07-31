@@ -1,18 +1,15 @@
-package pkg
+package server
 
 import (
 	"io"
 	"time"
 
+	"github.com/jiefenghuang/jfs-plugin/pkg/msg"
 	"github.com/juicedata/juicefs/pkg/object"
 )
 
-type lener interface {
-	Len() int
-}
-
 type lenReadCloser interface {
-	lener
+	msg.Lener
 	io.ReadCloser
 }
 

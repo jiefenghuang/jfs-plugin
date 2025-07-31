@@ -326,8 +326,6 @@ github.com/juicedata/gogfapi v0.0.0-20241204082332-ecd102647f80 h1:EPg/f3lhbAOjE
 github.com/juicedata/gogfapi v0.0.0-20241204082332-ecd102647f80/go.mod h1:Ho5G4KgrgbMKW0buAJdOmYoJcOImkzznJQaLiATrsx4=
 github.com/juicedata/huaweicloud-sdk-go-obs v3.22.12-0.20230228031208-386e87b5c091+incompatible h1:2/ttSmYoX+QMegpNyAJR0Y6aHcVk57F7RJit5xN2T/s=
 github.com/juicedata/huaweicloud-sdk-go-obs v3.22.12-0.20230228031208-386e87b5c091+incompatible/go.mod h1:Ukwa8ffRQLV6QRwpqGioPjn2Wnf7TBDA4DbennDOqHE=
-github.com/juicedata/juicefs v1.4.0-dev.0.20250730082411-a93aeb317c47 h1:PoQVa4cLiGtjiiE2RNCZhvTHrFvpvZz1lSv6jxlh5TE=
-github.com/juicedata/juicefs v1.4.0-dev.0.20250730082411-a93aeb317c47/go.mod h1:+Ny/Hw6l/JgiaytcIdw/ZCUShINbw3QyEXb1+fTV4WY=
 github.com/juicedata/mpb/v7 v7.0.4-0.20231024073412-2b8d31be510b h1:0/6suPNZnrOlRlBaU/Bnitu8HiKkkLSzQhHbwQ9AysM=
 github.com/juicedata/mpb/v7 v7.0.4-0.20231024073412-2b8d31be510b/go.mod h1:NXGsfPGx6G2JssqvEcULtDqUrxuuYs4llpv8W6ZUpzk=
 github.com/kisielk/errcheck v1.1.0/go.mod h1:EZBBE59ingxPouuu3KfxchcWSUPOHkagtvWXihfKN4Q=

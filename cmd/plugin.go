@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/jiefenghuang/jfs-plugin/pkg"
+	"github.com/jiefenghuang/jfs-plugin/pkg/server"
 	"github.com/juicedata/juicefs/pkg/version"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli/v2"
@@ -49,12 +49,12 @@ func runServer(c *cli.Context) error {
 		maxVer = version.Parse(c.String("max-version"))
 	}
 
-	capList := pkg.DefaultCliCapList
+	var capList []int
 	if c.IsSet("buff-list") {
 		capList = c.IntSlice("buff-list")
 	}
 
-	svr, err := pkg.NewServer(&pkg.SvrOptions{
+	svr, err := server.NewServer(&server.SvrOptions{
 		URL:        c.Args().First(),
 		BuffList:   capList,
 		MinVersion: minVer,

@@ -1,4 +1,4 @@
-package pkg
+package server
 
 import (
 	"bytes"
@@ -9,14 +9,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jiefenghuang/jfs-plugin/pkg/msg"
 	"github.com/juicedata/juicefs/pkg/object"
 	"github.com/stretchr/testify/require"
 )
 
 func BenchmarkBufferPool(b *testing.B) {
-	pool := newBufferPool([]int{5})
+	b.ReportAllocs()
+
+	pool := msg.NewBytesPool([]int{5})
 	b.Run("Get Exp", func(b *testing.B) {
-		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			buff := pool.Get(4)
@@ -41,7 +43,7 @@ var dummyObject = make([]byte, 4<<20)
 var dummyStore = make([]byte, 4<<20)
 
 func (f *fakePlugin) get(any) (any, error) {
-	return &getOut{rc: &getReader{bytes.NewReader(dummyObject)}}, nil
+	return &getOut{rc: &fGetReader{bytes.NewReader(dummyObject)}}, nil
 }
 
 func (f *fakePlugin) put(in any) (any, error) {
@@ -62,7 +64,7 @@ func (f *fakePlugin) limits(any) (any, error) {
 
 func BenchmarkPlugin(b *testing.B) {
 	b.Run("UDS", func(b *testing.B) {
-		sock := path.Join(os.TempDir(), time.Now().Format("080808")+".uds")
+		sock := path.Join(os.TempDir(), time.Now().Format("150405")+".uds")
 		defer os.RemoveAll(sock)
 		benchmarkConn(b, fmt.Sprintf("unix://%s", sock))
 	})
@@ -81,7 +83,7 @@ func benchmarkConn(b *testing.B, url string) {
 	defer svr.close()
 	<-done
 
-	cli, err := NewClient(&CliOptions{
+	cli, err := object.NewPluginClient(&object.PluginOptions{
 		Version: "1.3.0",
 		MaxConn: 200,
 		URL:     url,
