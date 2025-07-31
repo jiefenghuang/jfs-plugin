@@ -26,7 +26,10 @@ import (
 
 func newTestPlugin(pool msg.BytesPool) plugin {
 	return &tPlugin{
-		pool: pool,
+		pool:     pool,
+		objects:  make(map[string][]byte),
+		mpus:     make(map[string]*object.MultipartUpload),
+		key2part: make(map[string][]*fPart),
 	}
 }
 
@@ -62,8 +65,6 @@ func (t *tPlugin) init(in any) (any, error) {
 		return nil, errors.New("init input cannot be nil")
 	}
 	t.endpoint = in.(*initIn).endpoint
-	t.mpus = make(map[string]*object.MultipartUpload)
-	t.key2part = make(map[string][]*fPart)
 	return nil, nil
 }
 
@@ -128,7 +129,6 @@ func (t *tPlugin) put(in any) (any, error) {
 }
 
 func (t *tPlugin) create(in any) (any, error) {
-	t.objects = make(map[string][]byte)
 	return nil, nil
 }
 
