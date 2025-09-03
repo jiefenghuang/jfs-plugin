@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -93,13 +94,14 @@ func benchmarkConn(b *testing.B, url string) {
 	}
 	defer cli.Close()
 
+	ctx := context.TODO()
 	b.SetBytes(4 << 20)
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.Run("Put", func(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
-				if err = cli.Put("test", bytes.NewReader(dummyObject)); err != nil {
+				if err = cli.Put(ctx, "test", bytes.NewReader(dummyObject)); err != nil {
 					panic(err)
 				}
 			}
@@ -108,7 +110,7 @@ func benchmarkConn(b *testing.B, url string) {
 	b.Run("Get", func(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
-				if _, err = cli.Get("test", 0, -1); err != nil {
+				if _, err = cli.Get(ctx, "test", 0, -1); err != nil {
 					panic(err)
 				}
 			}

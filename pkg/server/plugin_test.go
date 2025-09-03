@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
@@ -29,13 +30,13 @@ func newTestPlugin(pool msg.BytesPool) plugin {
 		pool:     pool,
 		objects:  make(map[string][]byte),
 		mpus:     make(map[string]*object.MultipartUpload),
-		key2part: make(map[string][]*fPart),
+		key2part: make(map[string][]*tPart),
 	}
 }
 
 var _ plugin = (*tPlugin)(nil)
 
-type part struct {
+type tPart struct {
 	num  int
 	body []byte
 }
@@ -45,13 +46,13 @@ type tPlugin struct {
 	pool     msg.BytesPool
 	objects  map[string][]byte
 	mpus     map[string]*object.MultipartUpload // simple implementation
-	key2part map[string][]*fPart
+	key2part map[string][]*tPart
 }
 
 var (
-	rid    = "fake-request-id"
-	sc     = "fake-storage-class"
-	limits = &object.Limits{
+	tRid    = "fake-request-id"
+	tSC     = "fake-storage-class"
+	tLimits = &object.Limits{
 		IsSupportMultipartUpload: false,
 		IsSupportUploadPartCopy:  true,
 		MinPartSize:              2,
@@ -73,26 +74,26 @@ func (t *tPlugin) str(any) (any, error) {
 }
 
 func (t *tPlugin) limits(any) (any, error) {
-	return fLimits, nil
+	return tLimits, nil
 }
 
-type getReader struct {
+type fGetReader struct {
 	*bytes.Reader
 }
 
-func (r *getReader) Close() error { return nil }
+func (r *fGetReader) Close() error { return nil }
 
 func (t *tPlugin) get(in any) (any, error) {
 	if in == nil {
-		return &getOut{sc: fSC, rid: fRid}, errors.New("get input cannot be nil")
+		return &getOut{sc: tSC, rid: tRid}, errors.New("get input cannot be nil")
 	}
 	gIn, ok := in.(*getIn)
 	if !ok {
-		return &getOut{sc: fSC, rid: fRid}, errors.New("invalid input type")
+		return &getOut{sc: tSC, rid: tRid}, errors.New("invalid input type")
 	}
 	data, ok := t.objects[gIn.key]
 	if !ok {
-		return &getOut{sc: fSC, rid: fRid}, errors.New("object not found")
+		return &getOut{sc: tSC, rid: tRid}, errors.New("object not found")
 	}
 	if gIn.limit > 0 {
 		data = data[gIn.offset : gIn.offset+gIn.limit]
@@ -101,8 +102,8 @@ func (t *tPlugin) get(in any) (any, error) {
 	}
 	return &getOut{
 		rc:  &fGetReader{bytes.NewReader(data)},
-		rid: fRid,
-		sc:  fSC,
+		rid: tRid,
+		sc:  tSC,
 	}, nil
 }
 
@@ -123,8 +124,8 @@ func (t *tPlugin) put(in any) (any, error) {
 		return nil, errors.Wrapf(err, "failed to read put data")
 	}
 	return &putOut{
-		rid: fRid,
-		sc:  fSC,
+		rid: tRid,
+		sc:  tSC,
 	}, nil
 }
 
@@ -135,10 +136,10 @@ func (t *tPlugin) create(in any) (any, error) {
 func (t *tPlugin) delete(in any) (any, error) {
 	key, ok := in.(string)
 	if !ok {
-		return &delOut{rid: fRid}, errors.New("invalid input type")
+		return &delOut{rid: tRid}, errors.New("invalid input type")
 	}
 	delete(t.objects, key)
-	return &delOut{rid: fRid}, nil
+	return &delOut{rid: tRid}, nil
 }
 
 func (t *tPlugin) copy(in any) (any, error) {
@@ -172,7 +173,7 @@ func (t *tPlugin) head(in any) (any, error) {
 	return &headOut{
 		obj: obj{
 			size: int64(len(info)),
-			sc:   fSC,
+			sc:   tSC,
 		},
 	}, nil
 }
@@ -182,7 +183,7 @@ func (t *tPlugin) setStorageClass(in any) (any, error) {
 	if !ok {
 		return nil, errors.New("invalid input type")
 	}
-	fSC = key
+	tSC = key
 	return nil, nil
 }
 
@@ -210,7 +211,7 @@ func (t *tPlugin) list(in any) (any, error) {
 		objects = append(objects, obj{
 			key:  key,
 			size: int64(len(data)),
-			sc:   fSC,
+			sc:   tSC,
 		})
 	}
 	sort.Slice(objects, func(i, j int) bool {
@@ -230,8 +231,8 @@ func (t *tPlugin) list(in any) (any, error) {
 func (t *tPlugin) createMultipartUpload(in any) (any, error) {
 	key := in.(string)
 	t.mpus[key] = &object.MultipartUpload{
-		MinPartSize: fLimits.MinPartSize,
-		MaxCount:    fLimits.MaxPartCount,
+		MinPartSize: tLimits.MinPartSize,
+		MaxCount:    tLimits.MaxPartCount,
 		UploadID:    time.Now().Format("150405"),
 	}
 	return t.mpus[key], nil
@@ -252,7 +253,7 @@ func (t *tPlugin) uploadPart(in any) (any, error) {
 	} else if len(t.key2part[upIn.key]) >= mpu.MaxCount {
 		return nil, errors.Errorf("exceed max part count %d", mpu.MaxCount)
 	}
-	t.key2part[upIn.key] = append(t.key2part[upIn.key], &fPart{
+	t.key2part[upIn.key] = append(t.key2part[upIn.key], &tPart{
 		num:  upIn.num,
 		body: data,
 	})
@@ -274,8 +275,8 @@ func (t *tPlugin) uploadPartCopy(in any) (any, error) {
 		return nil, errors.New("invalid offset or size for upload part copy")
 	}
 	data := srcObj[upcIn.off : upcIn.off+upcIn.size]
-	if len(data) < fLimits.MinPartSize || len(data) > int(fLimits.MaxPartSize) {
-		return nil, errors.Errorf("part size must be between %d and %d bytes", fLimits.MinPartSize, fLimits.MaxPartSize)
+	if len(data) < tLimits.MinPartSize || len(data) > int(tLimits.MaxPartSize) {
+		return nil, errors.Errorf("part size must be between %d and %d bytes", tLimits.MinPartSize, tLimits.MaxPartSize)
 	}
 
 	if _, ok := t.mpus[upcIn.dstKey]; !ok {
@@ -284,7 +285,7 @@ func (t *tPlugin) uploadPartCopy(in any) (any, error) {
 	if t.mpus[upcIn.dstKey].UploadID != upcIn.uploadID {
 		return nil, errors.New("invalid upload ID")
 	}
-	t.key2part[upcIn.dstKey] = append(t.key2part[upcIn.dstKey], &fPart{
+	t.key2part[upcIn.dstKey] = append(t.key2part[upcIn.dstKey], &tPart{
 		num:  upcIn.num,
 		body: data,
 	})
@@ -318,7 +319,7 @@ func (t *tPlugin) completeMultipartUpload(in any) (any, error) {
 		return nil, errors.New("invalid upload ID")
 	}
 	parts := t.key2part[cIn.key]
-	partM := make(map[int]*fPart)
+	partM := make(map[int]*tPart)
 	total := 0
 	for _, p := range parts {
 		partM[p.num] = p
@@ -397,14 +398,15 @@ func TestPlugin(t *testing.T) {
 	})
 	defer os.RemoveAll(p)
 
+	ctx := context.TODO()
 	t.Run("Create", func(t *testing.T) {
-		require.Nil(t, cli.Create())
+		require.Nil(t, cli.Create(ctx))
 	})
 	t.Run("String", func(t *testing.T) {
 		require.Equal(t, p, cli.String())
 	})
 	t.Run("Limits", func(t *testing.T) {
-		require.True(t, reflect.DeepEqual(*fLimits, cli.Limits()))
+		require.True(t, reflect.DeepEqual(*tLimits, cli.Limits()))
 	})
 
 	num := 2000
@@ -418,12 +420,12 @@ func TestPlugin(t *testing.T) {
 			} else {
 				vals[i] = []byte(randString(mrand.Intn(1024) + 1))
 			}
-			require.Nil(t, cli.Put(keys[i], bytes.NewReader(vals[i])))
+			require.Nil(t, cli.Put(ctx, keys[i], bytes.NewReader(vals[i])))
 		}
 	})
 	t.Run("Get", func(t *testing.T) {
 		for i := 0; i < num; i++ {
-			r, err := cli.Get(keys[i], 0, -1)
+			r, err := cli.Get(ctx, keys[i], 0, -1)
 			require.Nil(t, err)
 			data, err := io.ReadAll(r)
 			require.Nil(t, err)
@@ -432,15 +434,15 @@ func TestPlugin(t *testing.T) {
 		}
 	})
 	t.Run("Delete", func(t *testing.T) {
-		require.Nil(t, cli.Delete(keys[0]))
-		_, err = cli.Get(keys[0], 0, -1)
+		require.Nil(t, cli.Delete(ctx, keys[0]))
+		_, err = cli.Get(ctx, keys[0], 0, -1)
 		require.Contains(t, err.Error(), "object not found")
 	})
 	t.Run("Copy", func(t *testing.T) {
-		require.Nil(t, cli.Copy(keys[0], keys[1]))
-		r1, err := cli.Get(keys[0], 0, -1)
+		require.Nil(t, cli.Copy(ctx, keys[0], keys[1]))
+		r1, err := cli.Get(ctx, keys[0], 0, -1)
 		require.Nil(t, err)
-		r2, err := cli.Get(keys[1], 0, -1)
+		r2, err := cli.Get(ctx, keys[1], 0, -1)
 		require.Nil(t, err)
 		data1, err := io.ReadAll(r1)
 		require.Nil(t, err)
@@ -451,10 +453,10 @@ func TestPlugin(t *testing.T) {
 		r2.Close()
 	})
 	t.Run("Head", func(t *testing.T) {
-		obj, err := cli.Head(keys[0])
+		obj, err := cli.Head(ctx, keys[0])
 		require.Nil(t, err)
 		require.Equal(t, keys[0], obj.Key())
-		obj2, err := cli.Head(keys[1])
+		obj2, err := cli.Head(ctx, keys[1])
 		require.Nil(t, err)
 		require.Equal(t, keys[1], obj2.Key())
 
@@ -465,65 +467,65 @@ func TestPlugin(t *testing.T) {
 	t.Run("SetStorageClass", func(t *testing.T) {
 		nsc := "new-sc"
 		require.Nil(t, cli.SetStorageClass(nsc))
-		obj, err := cli.Head(keys[0])
+		obj, err := cli.Head(ctx, keys[0])
 		require.Nil(t, err)
 		require.Equal(t, nsc, obj.StorageClass())
 	})
 	t.Run("List", func(t *testing.T) {
-		objs, isTruncated, nextMarker, err := cli.List("", "", "", "", int64(num), false)
+		objs, isTruncated, nextMarker, err := cli.List(ctx, "", "", "", "", int64(num), false)
 		require.Nil(t, err)
 		require.False(t, isTruncated)
 		require.Equal(t, slices.Max(keys), nextMarker)
 		require.Equal(t, num, len(objs))
 
-		_, _, _, err = cli.List("", "", "", "", -1, false)
+		_, _, _, err = cli.List(ctx, "", "", "", "", -1, false)
 		require.Contains(t, err.Error(), "limit must be greater than 0")
 
-		objs, isTruncated, _, err = cli.List("", "", "", "", int64(num/10), false)
+		objs, isTruncated, _, err = cli.List(ctx, "", "", "", "", int64(num/10), false)
 		require.Nil(t, err)
 		require.True(t, isTruncated)
 		require.LessOrEqual(t, len(objs), num/10)
 	})
 	t.Run("Multipart Upload", func(t *testing.T) {
 		key := "test-mpu"
-		mpu, err := cli.CreateMultipartUpload(key)
+		mpu, err := cli.CreateMultipartUpload(ctx, key)
 		require.Nil(t, err)
-		require.Equal(t, fLimits.MinPartSize, mpu.MinPartSize)
-		require.Equal(t, fLimits.MaxPartCount, mpu.MaxCount)
+		require.Equal(t, tLimits.MinPartSize, mpu.MinPartSize)
+		require.Equal(t, tLimits.MaxPartCount, mpu.MaxCount)
 		require.NotEmpty(t, mpu.UploadID)
 
-		_, err = cli.UploadPart(key, mpu.UploadID, 1, []byte("part1"))
+		_, err = cli.UploadPart(ctx, key, mpu.UploadID, 1, []byte("part1"))
 		require.Nil(t, err)
-		_, err = cli.UploadPart(key, mpu.UploadID, 2, []byte("part2"))
+		_, err = cli.UploadPart(ctx, key, mpu.UploadID, 2, []byte("part2"))
 		require.Nil(t, err)
 
-		parts, nextMarker, err := cli.ListUploads(key)
+		parts, nextMarker, err := cli.ListUploads(ctx, key)
 		require.Nil(t, err)
 		require.Equal(t, "", nextMarker)
 		require.Len(t, parts, 2)
 
-		cli.AbortUpload(key, mpu.UploadID)
-		_, _, err = cli.ListUploads(key)
+		cli.AbortUpload(ctx, key, mpu.UploadID)
+		_, _, err = cli.ListUploads(ctx, key)
 		require.Contains(t, err.Error(), "multipart upload not found")
 
 		// redo
-		mpu, err = cli.CreateMultipartUpload(key)
+		mpu, err = cli.CreateMultipartUpload(ctx, key)
 		require.Nil(t, err)
-		require.Equal(t, fLimits.MinPartSize, mpu.MinPartSize)
-		require.Equal(t, fLimits.MaxPartCount, mpu.MaxCount)
+		require.Equal(t, tLimits.MinPartSize, mpu.MinPartSize)
+		require.Equal(t, tLimits.MaxPartCount, mpu.MaxCount)
 		require.NotEmpty(t, mpu.UploadID)
 
-		part1, err := cli.UploadPart(key, mpu.UploadID, 1, []byte("part1"))
+		part1, err := cli.UploadPart(ctx, key, mpu.UploadID, 1, []byte("part1"))
 		require.Nil(t, err)
-		part2, err := cli.UploadPartCopy(key, mpu.UploadID, 2, keys[1], 0, 5)
+		part2, err := cli.UploadPartCopy(ctx, key, mpu.UploadID, 2, keys[1], 0, 5)
 		require.Nil(t, err)
-		_, err = cli.UploadPart(key, mpu.UploadID, 3, []byte("part3"))
+		_, err = cli.UploadPart(ctx, key, mpu.UploadID, 3, []byte("part3"))
 		require.Contains(t, err.Error(), "exceed max part count")
 
-		err = cli.CompleteUpload(key, mpu.UploadID, []*object.Part{part1, part2})
+		err = cli.CompleteUpload(ctx, key, mpu.UploadID, []*object.Part{part1, part2})
 		require.Nil(t, err)
 
-		rc, err := cli.Get(key, 0, -1)
+		rc, err := cli.Get(ctx, key, 0, -1)
 		require.Nil(t, err)
 		defer rc.Close()
 		data, err := io.ReadAll(rc)
